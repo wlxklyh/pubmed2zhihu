@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project data (不提交用户数据)
+projects/
+cache/
+logs/
+
+# Tasks (RIPER-5 任务文件)
+.tasks/
+
+# Config (包含敏感信息)
+config/config.ini
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cursor
+.cursor/
+

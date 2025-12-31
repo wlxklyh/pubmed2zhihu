@@ -1,0 +1,217 @@
+{% extends 'base.html' %}
+
+{% block title %}新建项目 - PubMed2Zhihu{% endblock %}
+
+{% block extra_css %}
+<style>
+    .new-project-form {
+        max-width: 700px;
+        margin: 2rem auto;
+    }
+    
+    .form-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    
+    .form-header h1 {
+        font-size: 2rem;
+        color: var(--primary);
+        margin-bottom: 0.5rem;
+    }
+    
+    .form-header p {
+        color: var(--text-light);
+    }
+    
+    .form-group {
+        margin-bottom: 1.5rem;
+    }
+    
+    .form-label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+        color: var(--text);
+    }
+    
+    .form-hint {
+        font-size: 0.85rem;
+        color: var(--text-light);
+        margin-top: 0.5rem;
+    }
+    
+    .search-input {
+        width: 100%;
+        padding: 1rem 1.25rem;
+        border: 2px solid var(--border);
+        border-radius: 12px;
+        font-size: 1.1rem;
+        transition: all 0.2s;
+    }
+    
+    .search-input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+    }
+    
+    .submit-btn {
+        width: 100%;
+        padding: 1rem;
+        font-size: 1.1rem;
+        margin-top: 1rem;
+    }
+    
+    .examples {
+        margin-top: 2rem;
+        padding: 1.5rem;
+        background: #f8fafc;
+        border-radius: 12px;
+    }
+    
+    .examples h3 {
+        font-size: 1rem;
+        color: var(--secondary);
+        margin-bottom: 1rem;
+    }
+    
+    .example-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    
+    .example-tag {
+        padding: 0.5rem 1rem;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        font-size: 0.9rem;
+        color: var(--text);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .example-tag:hover {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+    
+    .loading-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.7);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .loading-overlay.active {
+        display: flex;
+    }
+    
+    .loading-content {
+        background: white;
+        padding: 3rem;
+        border-radius: 16px;
+        text-align: center;
+        max-width: 400px;
+    }
+    
+    .loading-spinner {
+        width: 60px;
+        height: 60px;
+        border: 4px solid var(--border);
+        border-radius: 50%;
+        border-top-color: var(--primary);
+        animation: spin 1s ease-in-out infinite;
+        margin: 0 auto 1.5rem;
+    }
+    
+    .loading-text {
+        font-size: 1.1rem;
+        color: var(--text);
+        margin-bottom: 0.5rem;
+    }
+    
+    .loading-hint {
+        font-size: 0.9rem;
+        color: var(--text-light);
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="new-project-form">
+    <div class="form-header">
+        <h1>新建文献检索项目</h1>
+        <p>输入您要检索的主题或关键词，系统将自动搜索PubMed并获取相关论文</p>
+    </div>
+    
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+    
+    <div class="card">
+        <form method="POST" id="searchForm">
+            <div class="form-group">
+                <label class="form-label">检索关键词</label>
+                <input type="text" name="query" class="search-input" 
+                       placeholder="例如: breast cancer treatment" 
+                       required autofocus id="queryInput">
+                <p class="form-hint">支持英文关键词、MeSH术语或组合检索式</p>
+            </div>
+            
+            <button type="submit" class="btn btn-primary submit-btn" id="submitBtn">
+                开始检索
+            </button>
+        </form>
+    </div>
+    
+    <div class="examples">
+        <h3>示例检索词</h3>
+        <div class="example-tags">
+            <span class="example-tag" onclick="setQuery('breast cancer treatment')">breast cancer treatment</span>
+            <span class="example-tag" onclick="setQuery('COVID-19 vaccine')">COVID-19 vaccine</span>
+            <span class="example-tag" onclick="setQuery('diabetes mellitus therapy')">diabetes mellitus therapy</span>
+            <span class="example-tag" onclick="setQuery('machine learning radiology')">machine learning radiology</span>
+            <span class="example-tag" onclick="setQuery('immunotherapy lung cancer')">immunotherapy lung cancer</span>
+        </div>
+    </div>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">正在处理中...</div>
+        <div class="loading-hint">
+            正在执行步骤1-3：搜索、获取详情、下载图片<br>
+            这可能需要1-2分钟，请耐心等待
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function setQuery(query) {
+    document.getElementById('queryInput').value = query;
+}
+
+document.getElementById('searchForm').addEventListener('submit', function() {
+    document.getElementById('loadingOverlay').classList.add('active');
+    document.getElementById('submitBtn').disabled = true;
+});
+</script>
+{% endblock %}
+

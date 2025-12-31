@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+
+{% block title %}错误 - PubMed2Zhihu{% endblock %}
+
+{% block content %}
+<div style="text-align: center; padding: 4rem 2rem;">
+    <div style="font-size: 4rem; margin-bottom: 1rem;">😕</div>
+    <h1 style="color: var(--danger); margin-bottom: 1rem;">出错了</h1>
+    <p style="color: var(--text-light); margin-bottom: 2rem;">{{ message }}</p>
+    <a href="/" class="btn btn-primary">返回首页</a>
+</div>
+{% endblock %}
+

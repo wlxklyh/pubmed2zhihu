@@ -1,0 +1,370 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ project_name }} - PubMed2Zhihu{% endblock %}
+
+{% block extra_css %}
+<style>
+    .project-header {
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+    }
+    
+    .project-header h1 {
+        font-size: 1.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .project-header .query {
+        font-size: 1.2rem;
+        opacity: 0.9;
+    }
+    
+    .steps-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+    
+    .step-card {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 1.25rem;
+        text-align: center;
+        border: 2px solid var(--border);
+        transition: all 0.2s;
+    }
+    
+    .step-card.completed {
+        border-color: var(--success);
+        background: #f0fdf4;
+    }
+    
+    .step-card.current {
+        border-color: var(--primary);
+        background: #eff6ff;
+    }
+    
+    .step-number {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--border);
+        color: var(--text-light);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 0.75rem;
+        font-weight: 700;
+    }
+    
+    .step-card.completed .step-number {
+        background: var(--success);
+        color: white;
+    }
+    
+    .step-card.current .step-number {
+        background: var(--primary);
+        color: white;
+    }
+    
+    .step-name {
+        font-size: 0.9rem;
+        color: var(--text);
+        font-weight: 500;
+    }
+    
+    .section {
+        margin-bottom: 2rem;
+    }
+    
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+    
+    .section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--text);
+    }
+    
+    .papers-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .paper-item {
+        background: var(--card);
+        border-radius: 12px;
+        padding: 1.25rem;
+        border: 1px solid var(--border);
+    }
+    
+    .paper-title {
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 0.5rem;
+    }
+    
+    .paper-meta {
+        font-size: 0.9rem;
+        color: var(--text-light);
+        margin-bottom: 0.75rem;
+    }
+    
+    .paper-meta span {
+        margin-right: 1rem;
+    }
+    
+    .paper-abstract {
+        font-size: 0.9rem;
+        color: var(--secondary);
+        line-height: 1.6;
+        max-height: 100px;
+        overflow: hidden;
+    }
+    
+    .figures-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+    }
+    
+    .figure-item {
+        background: var(--card);
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+    }
+    
+    .figure-item img {
+        width: 100%;
+        height: 150px;
+        object-fit: cover;
+    }
+    
+    .figure-caption {
+        padding: 0.75rem;
+        font-size: 0.85rem;
+        color: var(--text-light);
+    }
+    
+    .action-buttons {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-top: 2rem;
+    }
+    
+    .status-message {
+        padding: 1rem;
+        border-radius: 8px;
+        margin-top: 1rem;
+        display: none;
+    }
+    
+    .status-message.show {
+        display: block;
+    }
+    
+    .status-message.success {
+        background: #f0fdf4;
+        color: #166534;
+        border: 1px solid #bbf7d0;
+    }
+    
+    .status-message.error {
+        background: #fef2f2;
+        color: #991b1b;
+        border: 1px solid #fecaca;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="project-header">
+    <h1>{{ project_name }}</h1>
+    {% if data.summary.search_query %}
+    <div class="query">检索词: {{ data.summary.search_query }}</div>
+    {% endif %}
+</div>
+
+<!-- 步骤进度 -->
+<div class="steps-container">
+    {% set current_step = data.summary.current_step|default(0) %}
+    {% for step in [
+        {'num': 1, 'name': 'PubMed搜索'},
+        {'num': 2, 'name': '获取详情'},
+        {'num': 3, 'name': '下载图片'},
+        {'num': 4, 'name': '生成Prompt'},
+        {'num': 5, 'name': '综合概述'},
+        {'num': 6, 'name': 'HTML报告'}
+    ] %}
+    <div class="step-card {% if step.num <= current_step %}completed{% elif step.num == current_step + 1 %}current{% endif %}">
+        <div class="step-number">{% if step.num <= current_step %}✓{% else %}{{ step.num }}{% endif %}</div>
+        <div class="step-name">{{ step.name }}</div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- 操作按钮 -->
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">操作</h3>
+    </div>
+    <div class="action-buttons">
+        {% if current_step < 3 %}
+        <button class="btn btn-primary" onclick="executeStep(3)">
+            执行步骤 3 (下载图片)
+        </button>
+        {% endif %}
+        
+        {% if current_step >= 3 and current_step < 6 %}
+        <button class="btn btn-primary" onclick="executeSteps456()">
+            执行步骤 4-6 (生成Prompt和报告)
+        </button>
+        {% endif %}
+        
+        {% if current_step >= 4 %}
+        <a href="/project/{{ project_name }}/prompts" class="btn btn-outline">
+            查看Prompt
+        </a>
+        {% endif %}
+        
+        {% if current_step >= 6 %}
+        <a href="/project/{{ project_name }}/report" class="btn btn-success" target="_blank">
+            查看HTML报告
+        </a>
+        {% endif %}
+    </div>
+    <div id="statusMessage" class="status-message"></div>
+</div>
+
+<!-- 论文列表 -->
+{% if data.papers %}
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">论文列表 ({{ data.papers|length }}篇)</h2>
+    </div>
+    <div class="papers-list">
+        {% for paper in data.papers[:5] %}
+        <div class="paper-item">
+            <div class="paper-title">{{ paper.title }}</div>
+            <div class="paper-meta">
+                <span>{{ paper.journal }}</span>
+                <span>{{ paper.pub_date }}</span>
+                <span>PMID: {{ paper.pmid }}</span>
+                {% if paper.pmcid %}
+                <span class="badge badge-success">PMC</span>
+                {% endif %}
+            </div>
+            <div class="paper-abstract">{{ paper.abstract[:200] }}...</div>
+        </div>
+        {% endfor %}
+        {% if data.papers|length > 5 %}
+        <p style="color: var(--text-light); text-align: center;">还有 {{ data.papers|length - 5 }} 篇论文...</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- 图片预览 -->
+{% if data.figures and data.figures.papers %}
+<div class="section">
+    <div class="section-header">
+        <h2 class="section-title">图片预览</h2>
+    </div>
+    <div class="figures-grid">
+        {% for paper_fig in data.figures.papers %}
+            {% for fig in paper_fig.figures[:2] %}
+            <div class="figure-item">
+                {% if fig.local_path %}
+                <img src="/project/{{ project_name }}/images/{{ fig.local_path.split('/')[-1] }}" alt="{{ fig.figure_id }}">
+                {% endif %}
+                <div class="figure-caption">{{ fig.figure_id }}</div>
+            </div>
+            {% endfor %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function executeStep(stepNum) {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading"></span> 处理中...';
+    
+    const statusDiv = document.getElementById('statusMessage');
+    statusDiv.className = 'status-message';
+    statusDiv.textContent = '';
+    
+    fetch('/project/{{ project_name }}/step/' + stepNum, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.className = 'status-message show success';
+            statusDiv.textContent = '步骤 ' + stepNum + ' 执行完成！正在刷新页面...';
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            statusDiv.className = 'status-message show error';
+            statusDiv.textContent = '执行失败: ' + (data.error || '未知错误');
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    })
+    .catch(err => {
+        statusDiv.className = 'status-message show error';
+        statusDiv.textContent = '请求失败: ' + err.message;
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    });
+}
+
+function executeSteps456() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading"></span> 处理中...';
+    
+    const statusDiv = document.getElementById('statusMessage');
+    statusDiv.className = 'status-message';
+    statusDiv.textContent = '';
+    
+    fetch('/project/{{ project_name }}/steps456', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.className = 'status-message show success';
+            statusDiv.textContent = '步骤4-6执行完成！正在刷新页面...';
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            statusDiv.className = 'status-message show error';
+            statusDiv.textContent = '执行失败: ' + (data.error || '未知错误');
+            btn.disabled = false;
+            btn.innerHTML = '执行步骤 4-6';
+        }
+    })
+    .catch(err => {
+        statusDiv.className = 'status-message show error';
+        statusDiv.textContent = '请求失败: ' + err.message;
+        btn.disabled = false;
+        btn.innerHTML = '执行步骤 4-6';
+    });
+}
+</script>
+{% endblock %}
+

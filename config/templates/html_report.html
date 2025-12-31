@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - PubMed论文综述</title>
+    <style>
+        :root {
+            --primary-color: #1a73e8;
+            --secondary-color: #5f6368;
+            --background-color: #f8f9fa;
+            --card-background: #ffffff;
+            --border-color: #dadce0;
+            --text-color: #202124;
+            --text-secondary: #5f6368;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.8;
+            color: var(--text-color);
+            background-color: var(--background-color);
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid var(--primary-color);
+        }
+        
+        header h1 {
+            font-size: 28px;
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        
+        header .meta {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+        
+        .overview-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 40px;
+        }
+        
+        .overview-section h2 {
+            font-size: 22px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.3);
+            padding-bottom: 10px;
+        }
+        
+        .overview-section .content {
+            font-size: 16px;
+        }
+        
+        .overview-section .content-en {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.3);
+            font-style: italic;
+            opacity: 0.9;
+        }
+        
+        .paper-list {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+        
+        .paper-card {
+            background: var(--card-background);
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .paper-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        }
+        
+        .paper-header {
+            background: var(--primary-color);
+            color: white;
+            padding: 20px;
+        }
+        
+        .paper-header h3 {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        
+        .paper-header h3 a {
+            color: white;
+            text-decoration: none;
+        }
+        
+        .paper-header h3 a:hover {
+            text-decoration: underline;
+        }
+        
+        .paper-meta {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+        
+        .paper-meta span {
+            margin-right: 15px;
+        }
+        
+        .paper-body {
+            padding: 25px;
+        }
+        
+        .summary-section {
+            margin-bottom: 20px;
+        }
+        
+        .summary-section h4 {
+            font-size: 16px;
+            color: var(--primary-color);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .summary-section h4::before {
+            content: '';
+            display: inline-block;
+            width: 4px;
+            height: 18px;
+            background: var(--primary-color);
+            margin-right: 10px;
+            border-radius: 2px;
+        }
+        
+        .summary-section p {
+            color: var(--text-color);
+            text-align: justify;
+        }
+        
+        .summary-en {
+            color: var(--text-secondary) !important;
+            font-style: italic;
+            font-size: 14px;
+        }
+        
+        .figures-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+        
+        .figures-section h4 {
+            font-size: 16px;
+            color: var(--primary-color);
+            margin-bottom: 15px;
+        }
+        
+        .figure-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        
+        .figure-item {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .figure-item img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .figure-item .caption {
+            padding: 10px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            background: var(--background-color);
+        }
+        
+        .figure-item .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-right: 5px;
+        }
+        
+        .tag-original {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .tag-unavailable {
+            background: #fff3e0;
+            color: #ef6c00;
+        }
+        
+        .no-figure {
+            color: var(--text-secondary);
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+            background: var(--background-color);
+            border-radius: 8px;
+        }
+        
+        footer {
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 1px solid var(--border-color);
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px 15px;
+            }
+            
+            header h1 {
+                font-size: 22px;
+            }
+            
+            .paper-header h3 {
+                font-size: 16px;
+            }
+            
+            .figure-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>{{ title }}</h1>
+            <div class="meta">
+                <p>检索关键词: {{ search_query }}</p>
+                <p>论文数量: {{ paper_count }} 篇 | 生成时间: {{ generated_time }}</p>
+            </div>
+        </header>
+        
+        {% if overview %}
+        <section class="overview-section">
+            <h2>综合小结 / Overview</h2>
+            <div class="content">
+                {{ overview.overview_cn }}
+            </div>
+            <div class="content content-en">
+                {{ overview.overview_en }}
+            </div>
+        </section>
+        {% endif %}
+        
+        <section class="paper-list">
+            {% for paper in papers %}
+            <article class="paper-card">
+                <div class="paper-header">
+                    <h3>
+                        <a href="https://pubmed.ncbi.nlm.nih.gov/{{ paper.pmid }}/" target="_blank">
+                            {{ paper.title }}
+                        </a>
+                    </h3>
+                    <div class="paper-meta">
+                        <span>{{ paper.authors_short }}</span>
+                        <span>{{ paper.journal }}</span>
+                        <span>{{ paper.pub_date }}</span>
+                        <span>PMID: {{ paper.pmid }}</span>
+                    </div>
+                </div>
+                <div class="paper-body">
+                    {% if paper.summary %}
+                    <div class="summary-section">
+                        <h4>中文小结</h4>
+                        <p>{{ paper.summary.summary_cn }}</p>
+                    </div>
+                    <div class="summary-section">
+                        <h4>English Summary</h4>
+                        <p class="summary-en">{{ paper.summary.summary_en }}</p>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="figures-section">
+                        <h4>相关图片</h4>
+                        {% if paper.figures %}
+                        <div class="figure-grid">
+                            {% for figure in paper.figures %}
+                            <div class="figure-item">
+                                <img src="{{ figure.path }}" alt="{{ figure.caption }}">
+                                <div class="caption">
+                                    <span class="tag {% if figure.is_original %}tag-original{% else %}tag-unavailable{% endif %}">
+                                        {% if figure.is_original %}原图{% else %}不可获取{% endif %}
+                                    </span>
+                                    {{ figure.caption }}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="no-figure">
+                            该论文无法获取原图（非开放获取或PMC无全文）
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </section>
+        
+        <footer>
+            <p>由 PubMed2Zhihu 工具生成</p>
+            <p>数据来源: NCBI PubMed / PubMed Central</p>
+        </footer>
+    </div>
+</body>
+</html>
+

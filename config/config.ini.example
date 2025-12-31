@@ -1,0 +1,51 @@
+[basic]
+output_dir = ./projects
+cache_dir = ./cache
+log_level = INFO
+max_results = 20
+
+[pubmed]
+# NCBI要求提供email用于API调用
+email = your_email@example.com
+# 可选：NCBI API Key可提高请求频率限制
+api_key = 
+tool_name = pubmed2zhihu
+retry_attempts = 3
+retry_delay = 2
+
+[pmc]
+# PMC图片下载超时时间（秒）
+figure_download_timeout = 30
+# 每篇论文最多下载的图片数量
+max_figures_per_paper = 5
+# 是否只下载主要图片（Figure，不包括补充材料）
+main_figures_only = true
+# PDF下载开关
+pdf_download_enabled = true
+# PDF下载超时时间（秒）
+pdf_download_timeout = 60
+# 全文最大词数限制
+fulltext_max_words = 8000
+
+[prompt]
+# Prompt模板文件
+single_template = templates/prompt_single.txt
+overview_template = templates/prompt_overview.txt
+# 总体综述字数要求
+overview_word_count = 500
+# 单篇论文小结字数要求
+single_word_count = 200
+
+[html]
+# HTML报告模板
+template_file = templates/html_report.html
+# 图片显示宽度
+image_width = 600
+# 是否包含原始摘要
+include_abstract = true
+
+[web]
+host = 127.0.0.1
+port = 5001
+debug = true
+
