@@ -581,8 +581,11 @@ class ReportGenerator:
             original_url = fig.get('original_url', '')
             
             if local_path:
+                # 使用相对路径，使HTML文件可以直接在文件系统中打开
+                # FinalOutput目录下的HTML需要访问 ../step3_figures/images/
                 img_path = f"../step3_figures/{local_path}"
-                img_html = f'<img src="{img_path}" alt="{fig_id}" style="max-width: {self.image_width}px;">'
+                # 添加点击放大功能
+                img_html = f'<a href="{img_path}" target="_blank" class="figure-link"><img src="{img_path}" alt="{fig_id}" style="max-width: {self.image_width}px; cursor: pointer;" title="点击查看大图"></a>'
             elif original_url:
                 img_html = f'<img src="{original_url}" alt="{fig_id}" style="max-width: {self.image_width}px;" onerror="this.style.display=\'none\'">'
             else:
@@ -1170,7 +1173,22 @@ class ReportGenerator:
             background: #fafafa;
         }
         
-        .figure-image img { max-width: 100%; height: auto; border-radius: 4px; }
+        .figure-image img { 
+            max-width: 100%; 
+            height: auto; 
+            border-radius: 4px; 
+            transition: transform 0.2s ease;
+        }
+        
+        .figure-link {
+            display: inline-block;
+            text-decoration: none;
+        }
+        
+        .figure-link:hover img {
+            transform: scale(1.02);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
         
         .figure-caption {
             padding: 14px 16px;

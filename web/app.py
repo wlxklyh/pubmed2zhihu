@@ -211,6 +211,14 @@ def serve_image(project_name, filename):
     return send_from_directory(images_dir, filename)
 
 
+@app.route('/project/<project_name>/step3_figures/images/<path:filename>')
+def serve_step3_image(project_name, filename):
+    """提供step3图片访问（兼容本地文件系统路径）"""
+    project_path = get_project_path(project_name)
+    images_dir = os.path.join(project_path, 'step3_figures', 'images')
+    return send_from_directory(images_dir, filename)
+
+
 @app.route('/project/<project_name>/paper/<path:filename>')
 def serve_paper_detail(project_name, filename):
     """提供论文详情页访问"""
@@ -225,12 +233,20 @@ def serve_paper_detail(project_name, filename):
 
 @app.route('/project/<project_name>/<path:filename>')
 def serve_project_file(project_name, filename):
-    """提供项目文件访问（兼容直接访问HTML文件）"""
-    # 只处理HTML文件，避免与其他路由冲突
+    """提供项目文件访问（兼容直接访问HTML文件和相对路径的资源）"""
+    project_path = get_project_path(project_name)
+    
+    # 处理step3_figures/images路径（来自HTML中的相对路径../step3_figures/images/）
+    if filename.startswith('step3_figures/images/'):
+        images_dir = os.path.join(project_path, 'step3_figures', 'images')
+        img_filename = filename.replace('step3_figures/images/', '')
+        if os.path.exists(os.path.join(images_dir, img_filename)):
+            return send_from_directory(images_dir, img_filename)
+    
+    # 只处理HTML文件
     if not filename.endswith('.html'):
         return render_template('error.html', message="文件不存在"), 404
     
-    project_path = get_project_path(project_name)
     final_output_dir = os.path.join(project_path, 'FinalOutput')
     
     if os.path.exists(os.path.join(final_output_dir, filename)):
