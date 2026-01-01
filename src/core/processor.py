@@ -86,9 +86,9 @@ class PubMedProcessor:
         
         return result
     
-    def execute_steps_1_to_3(self, query: str) -> Dict:
+    def execute_steps_1_to_4(self, query: str) -> Dict:
         """
-        执行步骤1-3：搜索、获取详情、下载图片
+        执行步骤1-4：搜索、获取详情、下载图片、生成Prompt
         
         Args:
             query: 搜索关键词
@@ -128,13 +128,22 @@ class PubMedProcessor:
             # 更新状态
             self._update_status(project_path, 3, 'step3_completed')
             
-            self.logger.success("步骤1-3全部完成!")
+            # 步骤4: 生成Prompt（自动执行）
+            result = self._execute_step4(project_path)
+            if not result['success']:
+                return result
+            
+            # 更新状态
+            self._update_status(project_path, 4, 'step4_completed')
+            
+            self.logger.success("步骤1-4全部完成!")
             self.logger.info(f"项目路径: {project_path}")
+            self.logger.info("请查看Prompt并提交给LLM处理，完成后再执行步骤5-6")
             
             return {
                 'success': True,
                 'project_path': project_path,
-                'message': '步骤1-3执行完成'
+                'message': '步骤1-4执行完成，请查看Prompt并提交LLM处理'
             }
             
         except Exception as e:
@@ -146,9 +155,9 @@ class PubMedProcessor:
                 'project_path': project_path
             }
     
-    def execute_steps_4_to_6(self, project_path: str) -> Dict:
+    def execute_steps_5_to_6(self, project_path: str) -> Dict:
         """
-        执行步骤4-6：生成Prompt和报告
+        执行步骤5-6：生成综合概述和HTML报告
         
         Args:
             project_path: 项目路径
@@ -161,13 +170,6 @@ class PubMedProcessor:
         self.logger.info("=" * 60)
         
         try:
-            # 步骤4: 生成单篇论文Prompt
-            result = self._execute_step4(project_path)
-            if not result['success']:
-                return result
-            
-            self._update_status(project_path, 4, 'step4_completed')
-            
             # 步骤5: 生成综合总结Prompt
             result = self._execute_step5(project_path)
             if not result['success']:
@@ -182,14 +184,58 @@ class PubMedProcessor:
             
             self._update_status(project_path, 6, 'step6_completed')
             
-            self.logger.success("步骤4-6全部完成!")
-            self.logger.info(f"HTML报告: {project_path}/step6_report/report.html")
+            self.logger.success("步骤5-6全部完成!")
+            self.logger.info(f"HTML报告: {project_path}/FinalOutput/overview_report.html")
             
             return {
                 'success': True,
                 'project_path': project_path,
-                'message': '步骤4-6执行完成'
+                'message': '步骤5-6执行完成'
             }
+            
+        except Exception as e:
+            self.logger.error(f"处理失败: {str(e)}")
+            self._update_status(project_path, -1, f'error: {str(e)}')
+            return {
+                'success': False,
+                'error': str(e),
+                'project_path': project_path
+            }
+    
+    def execute_steps_4_to_6(self, project_path: str) -> Dict:
+        """
+        执行步骤4-6：生成Prompt和报告（向后兼容）
+        如果步骤4已完成，则只执行步骤5-6
+        
+        Args:
+            project_path: 项目路径
+            
+        Returns:
+            Dict: 执行结果
+        """
+        # 检查步骤4是否已完成
+        summary = self.file_manager.get_project_summary(project_path)
+        current_step = summary.get('current_step', 0)
+        
+        if current_step >= 4:
+            # 步骤4已完成，只执行5-6
+            return self.execute_steps_5_to_6(project_path)
+        
+        # 步骤4未完成，执行完整的4-6
+        self.logger.info("=" * 60)
+        self.logger.info(f"继续处理项目: {project_path}")
+        self.logger.info("=" * 60)
+        
+        try:
+            # 步骤4: 生成单篇论文Prompt
+            result = self._execute_step4(project_path)
+            if not result['success']:
+                return result
+            
+            self._update_status(project_path, 4, 'step4_completed')
+            
+            # 继续执行步骤5-6
+            return self.execute_steps_5_to_6(project_path)
             
         except Exception as e:
             self.logger.error(f"处理失败: {str(e)}")
@@ -210,15 +256,15 @@ class PubMedProcessor:
         Returns:
             Dict: 执行结果
         """
-        # 先执行步骤1-3
-        result = self.execute_steps_1_to_3(query)
+        # 先执行步骤1-4
+        result = self.execute_steps_1_to_4(query)
         if not result['success']:
             return result
         
         project_path = result['project_path']
         
-        # 继续执行步骤4-6
-        return self.execute_steps_4_to_6(project_path)
+        # 继续执行步骤5-6
+        return self.execute_steps_5_to_6(project_path)
     
     def _execute_step1(self, project_path: str, query: str = None) -> Dict:
         """执行步骤1: PubMed搜索"""

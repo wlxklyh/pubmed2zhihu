@@ -9,6 +9,8 @@ import ssl
 import time
 import re
 import requests
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -54,6 +56,7 @@ class PaperDetailsFetcher:
         self.pdf_enabled = config.get_boolean('pmc', 'pdf_download_enabled', True)
         self.pdf_timeout = config.get_int('pmc', 'pdf_download_timeout', 60)
         self.fulltext_max_words = config.get_int('pmc', 'fulltext_max_words', 8000)
+        self.max_workers = config.get_int('pmc', 'pdf_download_workers', 4)
         
         # HTTP请求头
         self.headers = {
@@ -108,57 +111,53 @@ class PaperDetailsFetcher:
             # 批量获取链接信息（包含PMCID）
             link_info = self._fetch_pmc_links(pmids)
             
-            # PDF统计
-            papers_with_fulltext = 0
-            papers_pdf_failed = 0
+            # 多线程并行处理
+            self.logger.info(f"使用 {self.max_workers} 个线程并行下载")
             
-            for i, paper in enumerate(papers):
+            # 线程安全的进度计数器和统计变量
+            progress_lock = threading.Lock()
+            progress_counter = [0]  # 使用列表以便在闭包中修改
+            papers_with_fulltext = [0]
+            papers_pdf_failed = [0]
+            
+            # 创建 pmid 到原始索引的映射，用于保持结果顺序
+            pmid_to_index = {paper['pmid']: i for i, paper in enumerate(papers)}
+            results_dict = {}
+            
+            def process_paper_wrapper(paper):
+                """线程任务包装器"""
                 pmid = paper['pmid']
-                self.logger.progress(i + 1, len(papers), f"处理: {pmid}")
-                
-                # 合并基本信息和链接信息
-                detailed_paper = paper.copy()
-                
-                # 添加PMCID信息
-                pmc_info = link_info.get(pmid, {})
-                pmcid = pmc_info.get('pmcid')
-                detailed_paper['pmcid'] = pmcid
-                detailed_paper['has_free_fulltext'] = pmcid is not None
-                
-                # 生成作者简写
-                authors = paper.get('authors', [])
-                if len(authors) > 3:
-                    detailed_paper['authors_short'] = f"{authors[0]} et al."
-                elif authors:
-                    detailed_paper['authors_short'] = ', '.join(authors)
-                else:
-                    detailed_paper['authors_short'] = 'Unknown'
-                
-                # 尝试获取DOI
-                doi = self._fetch_doi(pmid)
-                detailed_paper['doi'] = doi
-                
-                # PDF下载和全文提取
-                if self.pdf_enabled:
-                    if pmcid:
-                        self.logger.info(f"下载PDF: {pmcid}")
-                        pdf_result = self._download_and_extract_pdf(pmcid, pdfs_dir)
-                        detailed_paper['pdf_path'] = pdf_result.get('pdf_path')
-                        detailed_paper['fulltext_path'] = pdf_result.get('fulltext_path')
-                        detailed_paper['fulltext_status'] = pdf_result.get('status')
-                        detailed_paper['fulltext_word_count'] = pdf_result.get('word_count', 0)
+                try:
+                    result = self._download_single_paper(paper, link_info, pdfs_dir)
+                    
+                    # 更新统计
+                    with progress_lock:
+                        if result.get('fulltext_status') == 'success':
+                            papers_with_fulltext[0] += 1
+                        elif result.get('fulltext_status') in ['download_failed', 'extract_failed']:
+                            papers_pdf_failed[0] += 1
                         
-                        if pdf_result.get('status') == 'success':
-                            papers_with_fulltext += 1
-                        elif pdf_result.get('status') in ['download_failed', 'extract_failed']:
-                            papers_pdf_failed += 1
-                    else:
-                        detailed_paper['pdf_path'] = None
-                        detailed_paper['fulltext_path'] = None
-                        detailed_paper['fulltext_status'] = 'no_pmcid'
-                        detailed_paper['fulltext_word_count'] = 0
+                        progress_counter[0] += 1
+                        self.logger.progress(progress_counter[0], len(papers), f"完成: {pmid}")
+                    
+                    return pmid, result
+                except Exception as e:
+                    self.logger.error(f"处理论文 {pmid} 时出错: {str(e)}")
+                    with progress_lock:
+                        progress_counter[0] += 1
+                        self.logger.progress(progress_counter[0], len(papers), f"失败: {pmid}")
+                    return pmid, paper.copy()
+            
+            # 使用线程池并行处理
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {executor.submit(process_paper_wrapper, paper): paper for paper in papers}
                 
-                detailed_papers.append(detailed_paper)
+                for future in as_completed(futures):
+                    pmid, result = future.result()
+                    results_dict[pmid] = result
+            
+            # 按原始顺序组装结果
+            detailed_papers = [results_dict[paper['pmid']] for paper in papers]
             
             print()  # 换行
             
@@ -174,15 +173,15 @@ class PaperDetailsFetcher:
                     'total_papers': len(detailed_papers),
                     'papers_with_pmc': papers_with_pmc,
                     'papers_without_pmc': len(detailed_papers) - papers_with_pmc,
-                    'papers_with_fulltext': papers_with_fulltext,
-                    'papers_pdf_failed': papers_pdf_failed
+                    'papers_with_fulltext': papers_with_fulltext[0],
+                    'papers_pdf_failed': papers_pdf_failed[0]
                 }
             }
             
             self.logger.success(f"详情获取完成: {len(detailed_papers)} 篇论文")
             self.logger.info(f"有PMC全文: {papers_with_pmc} 篇, 无PMC全文: {len(detailed_papers) - papers_with_pmc} 篇")
             if self.pdf_enabled:
-                self.logger.info(f"PDF全文提取成功: {papers_with_fulltext} 篇, 失败: {papers_pdf_failed} 篇")
+                self.logger.info(f"PDF全文提取成功: {papers_with_fulltext[0]} 篇, 失败: {papers_pdf_failed[0]} 篇")
             
             return result
             
@@ -522,6 +521,59 @@ class PaperDetailsFetcher:
             result['status'] = 'extract_failed'
         
         return result
+    
+    def _download_single_paper(self, paper: Dict, link_info: Dict, pdfs_dir: str) -> Dict:
+        """
+        处理单篇论文的详情获取（线程安全）
+        
+        Args:
+            paper: 论文基本信息
+            link_info: PMC链接信息字典
+            pdfs_dir: PDF输出目录
+            
+        Returns:
+            Dict: 处理后的详细论文信息
+        """
+        pmid = paper['pmid']
+        
+        # 合并基本信息和链接信息
+        detailed_paper = paper.copy()
+        
+        # 添加PMCID信息
+        pmc_info = link_info.get(pmid, {})
+        pmcid = pmc_info.get('pmcid')
+        detailed_paper['pmcid'] = pmcid
+        detailed_paper['has_free_fulltext'] = pmcid is not None
+        
+        # 生成作者简写
+        authors = paper.get('authors', [])
+        if len(authors) > 3:
+            detailed_paper['authors_short'] = f"{authors[0]} et al."
+        elif authors:
+            detailed_paper['authors_short'] = ', '.join(authors)
+        else:
+            detailed_paper['authors_short'] = 'Unknown'
+        
+        # 尝试获取DOI
+        doi = self._fetch_doi(pmid)
+        detailed_paper['doi'] = doi
+        
+        # PDF下载和全文提取
+        if self.pdf_enabled:
+            if pmcid:
+                self.logger.info(f"下载PDF: {pmcid}")
+                pdf_result = self._download_and_extract_pdf(pmcid, pdfs_dir)
+                detailed_paper['pdf_path'] = pdf_result.get('pdf_path')
+                detailed_paper['fulltext_path'] = pdf_result.get('fulltext_path')
+                detailed_paper['fulltext_status'] = pdf_result.get('status')
+                detailed_paper['fulltext_word_count'] = pdf_result.get('word_count', 0)
+            else:
+                detailed_paper['pdf_path'] = None
+                detailed_paper['fulltext_path'] = None
+                detailed_paper['fulltext_status'] = 'no_pmcid'
+                detailed_paper['fulltext_word_count'] = 0
+        
+        return detailed_paper
 
 
 def main(project_path: str) -> bool:

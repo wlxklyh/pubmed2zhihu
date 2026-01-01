@@ -55,9 +55,9 @@ def new_project():
         if not query:
             return render_template('new.html', error="请输入搜索关键词")
         
-        # 创建项目并执行步骤1-3
+        # 创建项目并执行步骤1-4（包含自动生成Prompt）
         processor = PubMedProcessor()
-        result = processor.execute_steps_1_to_3(query)
+        result = processor.execute_steps_1_to_4(query)
         
         if result['success']:
             project_path = result['project_path']
@@ -101,9 +101,23 @@ def execute_step(project_name, step_num):
     return jsonify(result)
 
 
+@app.route('/project/<project_name>/steps56', methods=['POST'])
+def execute_steps_56(project_name):
+    """执行步骤5-6（生成报告）"""
+    project_path = get_project_path(project_name)
+    
+    if not os.path.exists(project_path):
+        return jsonify({'success': False, 'error': '项目不存在'})
+    
+    processor = PubMedProcessor()
+    result = processor.execute_steps_5_to_6(project_path)
+    
+    return jsonify(result)
+
+
 @app.route('/project/<project_name>/steps456', methods=['POST'])
 def execute_steps_456(project_name):
-    """执行步骤4-6"""
+    """执行步骤4-6（向后兼容）"""
     project_path = get_project_path(project_name)
     
     if not os.path.exists(project_path):
@@ -200,6 +214,22 @@ def serve_image(project_name, filename):
 @app.route('/project/<project_name>/paper/<path:filename>')
 def serve_paper_detail(project_name, filename):
     """提供论文详情页访问"""
+    project_path = get_project_path(project_name)
+    final_output_dir = os.path.join(project_path, 'FinalOutput')
+    
+    if os.path.exists(os.path.join(final_output_dir, filename)):
+        return send_from_directory(final_output_dir, filename)
+    else:
+        return render_template('error.html', message="详情页不存在"), 404
+
+
+@app.route('/project/<project_name>/<path:filename>')
+def serve_project_file(project_name, filename):
+    """提供项目文件访问（兼容直接访问HTML文件）"""
+    # 只处理HTML文件，避免与其他路由冲突
+    if not filename.endswith('.html'):
+        return render_template('error.html', message="文件不存在"), 404
+    
     project_path = get_project_path(project_name)
     final_output_dir = os.path.join(project_path, 'FinalOutput')
     

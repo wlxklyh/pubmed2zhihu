@@ -26,6 +26,10 @@ pdf_download_enabled = true
 pdf_download_timeout = 60
 # 全文最大词数限制
 fulltext_max_words = 8000
+# PDF并行下载线程数
+pdf_download_workers = 4
+# 图片并行下载线程数
+figure_download_workers = 4
 
 [prompt]
 # Prompt模板文件

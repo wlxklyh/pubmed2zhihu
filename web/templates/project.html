@@ -226,16 +226,16 @@
         </button>
         {% endif %}
         
-        {% if current_step >= 3 and current_step < 6 %}
-        <button class="btn btn-primary" onclick="executeSteps456()">
-            执行步骤 4-6 (生成Prompt和报告)
-        </button>
-        {% endif %}
-        
         {% if current_step >= 4 %}
         <a href="/project/{{ project_name }}/prompts" class="btn btn-outline">
             查看Prompt
         </a>
+        {% endif %}
+        
+        {% if current_step >= 4 and current_step < 6 %}
+        <button class="btn btn-primary" onclick="executeSteps56()">
+            执行步骤 5-6 (生成报告)
+        </button>
         {% endif %}
         
         {% if current_step >= 6 %}
@@ -244,6 +244,13 @@
         </a>
         {% endif %}
     </div>
+    
+    {% if current_step >= 4 and current_step < 6 %}
+    <div style="margin-top: 1rem; padding: 1rem; background: #fef3c7; border-radius: 8px; color: #92400e; font-size: 0.9rem;">
+        提示：请先查看Prompt，复制到LLM（如ChatGPT/Claude）处理获取结果后，再点击「执行步骤 5-6」生成最终报告。
+    </div>
+    {% endif %}
+    
     <div id="statusMessage" class="status-message"></div>
 </div>
 
@@ -333,7 +340,7 @@ function executeStep(stepNum) {
     });
 }
 
-function executeSteps456() {
+function executeSteps56() {
     const btn = event.target;
     btn.disabled = true;
     btn.innerHTML = '<span class="loading"></span> 处理中...';
@@ -342,27 +349,27 @@ function executeSteps456() {
     statusDiv.className = 'status-message';
     statusDiv.textContent = '';
     
-    fetch('/project/{{ project_name }}/steps456', {
+    fetch('/project/{{ project_name }}/steps56', {
         method: 'POST'
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
             statusDiv.className = 'status-message show success';
-            statusDiv.textContent = '步骤4-6执行完成！正在刷新页面...';
+            statusDiv.textContent = '步骤5-6执行完成！正在刷新页面...';
             setTimeout(() => location.reload(), 1500);
         } else {
             statusDiv.className = 'status-message show error';
             statusDiv.textContent = '执行失败: ' + (data.error || '未知错误');
             btn.disabled = false;
-            btn.innerHTML = '执行步骤 4-6';
+            btn.innerHTML = '执行步骤 5-6 (生成报告)';
         }
     })
     .catch(err => {
         statusDiv.className = 'status-message show error';
         statusDiv.textContent = '请求失败: ' + err.message;
         btn.disabled = false;
-        btn.innerHTML = '执行步骤 4-6';
+        btn.innerHTML = '执行步骤 5-6 (生成报告)';
     });
 }
 </script>
