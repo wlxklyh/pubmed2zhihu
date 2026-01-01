@@ -132,3 +132,4 @@ class Logger:
         self.logger.info(message)
         print(colored_message)
 
+

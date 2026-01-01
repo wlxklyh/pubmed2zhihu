@@ -43,9 +43,10 @@ class ReportGenerator:
             # 生成HTML
             html_content = self._generate_html(data, project_path, summaries)
             
-            # 保存报告
-            step6_dir = file_manager.get_step_directory(project_path, 'step6_report')
-            report_file = os.path.join(step6_dir, 'report.html')
+            # 保存报告到 FinalOutput 目录
+            final_output_dir = os.path.join(project_path, 'FinalOutput')
+            os.makedirs(final_output_dir, exist_ok=True)
+            report_file = os.path.join(final_output_dir, 'report.html')
             
             with open(report_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
@@ -696,9 +697,10 @@ def main(project_path: str) -> bool:
         result = generator.generate_report(project_path)
         
         if result['success']:
-            # 保存结果
-            step6_dir = file_manager.get_step_directory(project_path, 'step6_report')
-            output_file = os.path.join(step6_dir, 'report_info.json')
+            # 保存结果到 FinalOutput 目录
+            final_output_dir = os.path.join(project_path, 'FinalOutput')
+            os.makedirs(final_output_dir, exist_ok=True)
+            output_file = os.path.join(final_output_dir, 'report_info.json')
             file_manager.save_json(output_file, result)
             
             logger.step_complete(6, "生成HTML报告")

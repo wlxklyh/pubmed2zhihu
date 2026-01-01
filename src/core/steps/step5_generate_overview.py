@@ -23,6 +23,7 @@ class OverviewPromptGenerator:
         template_path = config.get('prompt', 'overview_template', 'config/templates/prompt_overview.txt')
         self.template = self._load_template(template_path)
         self.word_count = config.get_int('prompt', 'overview_word_count', 500)
+        self.overview_max_words = config.get_int('prompt', 'overview_max_words', 8000)
     
     def _load_template(self, template_path: str) -> str:
         """加载Prompt模板"""
@@ -107,7 +108,7 @@ class OverviewPromptGenerator:
             papers = details_data.get('papers', [])
             
             # 生成论文概览
-            papers_overview = self._generate_papers_overview(papers)
+            papers_overview = self._generate_papers_overview(papers, project_path)
             
             # 填充模板
             prompt = self.template.format(
@@ -146,24 +147,80 @@ class OverviewPromptGenerator:
                 'generate_time': datetime.now().isoformat()
             }
     
-    def _generate_papers_overview(self, papers: List[Dict]) -> str:
+    def _get_paper_content(self, paper: Dict, project_path: str) -> Dict:
+        """
+        获取论文内容（优先全文，降级到摘要）
+        
+        Args:
+            paper: 论文信息
+            project_path: 项目路径
+            
+        Returns:
+            Dict: {'source': 'fulltext'/'abstract', 'text': '...', 'word_count': int}
+        """
+        fulltext_status = paper.get('fulltext_status', '')
+        fulltext_path = paper.get('fulltext_path')
+        
+        # 尝试读取全文
+        if fulltext_status == 'success' and fulltext_path:
+            full_path = os.path.join(project_path, 'step2_details', fulltext_path)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, 'r', encoding='utf-8') as f:
+                        fulltext = f.read()
+                    
+                    # 按词计算并截取
+                    words = fulltext.split()
+                    word_count = len(words)
+                    
+                    if word_count > self.overview_max_words:
+                        # 截取前 overview_max_words 词
+                        truncated_text = ' '.join(words[:self.overview_max_words])
+                        return {
+                            'source': 'fulltext',
+                            'text': truncated_text,
+                            'word_count': word_count,
+                            'truncated': True
+                        }
+                    else:
+                        return {
+                            'source': 'fulltext',
+                            'text': fulltext,
+                            'word_count': word_count,
+                            'truncated': False
+                        }
+                except Exception:
+                    pass
+        
+        # 降级到完整摘要
+        abstract = paper.get('abstract', '摘要不可用')
+        return {
+            'source': 'abstract',
+            'text': abstract,
+            'word_count': len(abstract.split()),
+            'truncated': False
+        }
+    
+    def _generate_papers_overview(self, papers: List[Dict], project_path: str) -> str:
         """
         生成论文列表概览
         
         Args:
             papers: 论文列表
+            project_path: 项目路径
             
         Returns:
             str: 格式化的论文概览
         """
         overview_parts = []
+        fulltext_count = 0
+        abstract_count = 0
         
         for i, paper in enumerate(papers, 1):
             title = paper.get('title', '未知标题')
             authors = paper.get('authors', [])
             journal = paper.get('journal', '未知期刊')
             pub_date = paper.get('pub_date', '未知日期')
-            abstract = paper.get('abstract', '')
             
             # 格式化作者
             if isinstance(authors, list):
@@ -172,18 +229,33 @@ class OverviewPromptGenerator:
             else:
                 author_str = str(authors)
             
-            # 截取摘要前200字
-            abstract_preview = abstract[:200] + '...' if len(abstract) > 200 else abstract
+            # 获取论文内容（全文或摘要）
+            content_data = self._get_paper_content(paper, project_path)
+            
+            # 统计
+            if content_data['source'] == 'fulltext':
+                fulltext_count += 1
+                source_label = '[全文]'
+                if content_data.get('truncated'):
+                    source_label = f'[全文-已截取前{self.overview_max_words}词]'
+            else:
+                abstract_count += 1
+                source_label = '[摘要]'
             
             overview_parts.append(f"""
 ### 论文 {i}
 - **标题**: {title}
 - **作者**: {author_str}
 - **期刊**: {journal} ({pub_date})
-- **摘要概要**: {abstract_preview}
+- **内容来源**: {source_label} (约{content_data['word_count']}词)
+
+{content_data['text']}
 """)
         
-        return "\n".join(overview_parts)
+        # 添加统计信息头部
+        stats_header = f"**内容统计**: 共{len(papers)}篇论文，其中{fulltext_count}篇有全文，{abstract_count}篇仅有摘要\n"
+        
+        return stats_header + "\n".join(overview_parts)
 
 
 def main(project_path: str) -> bool:

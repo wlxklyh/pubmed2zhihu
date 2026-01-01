@@ -31,3 +31,4 @@ def test_figure_fetch():
 if __name__ == '__main__':
     test_figure_fetch()
 
+

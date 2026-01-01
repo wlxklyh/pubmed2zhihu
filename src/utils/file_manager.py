@@ -45,9 +45,9 @@ class FileManager:
             'step1_search',
             'step2_details',
             'step3_figures',
-            'step4_prompt',
-            'step5_summaries',
-            'step6_html',
+            'step4_prompts',
+            'step5_overview',
+            'step6_report',
             'FinalOutput'
         ]
         
