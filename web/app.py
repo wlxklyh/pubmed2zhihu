@@ -116,16 +116,43 @@ def execute_steps_456(project_name):
 
 
 @app.route('/project/<project_name>/report')
-def view_report(project_name):
-    """查看HTML报告"""
+@app.route('/project/<project_name>/report/')
+@app.route('/project/<project_name>/report/<path:filename>')
+def view_report(project_name, filename=None):
+    """
+    查看HTML报告
+    
+    支持访问：
+    - /project/<name>/report -> 主报告 overview_report.html
+    - /project/<name>/report/overview_report.html -> 主报告
+    - /project/<name>/report/<pmid>_xxx.html -> 论文详情页
+    """
     project_path = get_project_path(project_name)
-    report_dir = os.path.join(project_path, 'step6_report')
-    report_file = os.path.join(report_dir, 'report.html')
+    report_dir = os.path.join(project_path, 'FinalOutput')
+    
+    # 如果没有指定文件名，默认显示overview_report.html
+    if filename is None:
+        filename = 'overview_report.html'
+    
+    report_file = os.path.join(report_dir, filename)
+    
+    # 调试日志
+    logger.info(f"访问报告: {filename}")
+    logger.info(f"报告目录: {report_dir}")
+    logger.info(f"完整路径: {report_file}")
+    logger.info(f"文件存在: {os.path.exists(report_file)}")
     
     if os.path.exists(report_file):
-        return send_from_directory(report_dir, 'report.html')
+        return send_from_directory(report_dir, filename)
     else:
-        return render_template('error.html', message="报告尚未生成"), 404
+        # 检查是否是报告未生成的情况
+        if filename == 'overview_report.html':
+            error_msg = "报告尚未生成，请先在项目详情页点击「生成报告」或运行步骤4-6"
+        else:
+            error_msg = f"文件不存在: {filename}"
+        
+        logger.warning(f"报告访问失败: {error_msg} | 路径: {report_file}")
+        return render_template('error.html', message=error_msg), 404
 
 
 @app.route('/project/<project_name>/prompts')
@@ -168,6 +195,18 @@ def serve_image(project_name, filename):
     project_path = get_project_path(project_name)
     images_dir = os.path.join(project_path, 'step3_figures', 'images')
     return send_from_directory(images_dir, filename)
+
+
+@app.route('/project/<project_name>/paper/<path:filename>')
+def serve_paper_detail(project_name, filename):
+    """提供论文详情页访问"""
+    project_path = get_project_path(project_name)
+    final_output_dir = os.path.join(project_path, 'FinalOutput')
+    
+    if os.path.exists(os.path.join(final_output_dir, filename)):
+        return send_from_directory(final_output_dir, filename)
+    else:
+        return render_template('error.html', message="详情页不存在"), 404
 
 
 @app.route('/api/projects')
@@ -239,8 +278,11 @@ def load_project_data(project_path):
         with open(overview_file, 'r', encoding='utf-8') as f:
             data['overview_info'] = json.load(f)
     
-    # 报告信息
-    report_file = os.path.join(project_path, 'step6_report', 'report_info.json')
+    # 报告信息 - 优先从FinalOutput读取，兼容旧路径step6_report
+    report_file = os.path.join(project_path, 'FinalOutput', 'report_info.json')
+    if not os.path.exists(report_file):
+        report_file = os.path.join(project_path, 'step6_report', 'report_info.json')
+    
     if os.path.exists(report_file):
         with open(report_file, 'r', encoding='utf-8') as f:
             data['report_info'] = json.load(f)

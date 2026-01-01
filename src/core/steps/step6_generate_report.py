@@ -1,10 +1,10 @@
 """
 步骤6：生成HTML报告
-整合所有信息生成最终的HTML报告页面
+整合LLM分析结果，生成最终的HTML报告页面（主页+详情页）
 """
 import os
 import sys
-import base64
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -21,13 +21,68 @@ class ReportGenerator:
         self.logger = logger
         self.image_width = config.get_int('html', 'image_width', 600)
     
-    def generate_report(self, project_path: str, summaries: Optional[Dict] = None) -> Dict:
+    def _load_llm_response(self, project_path: str) -> Optional[Dict]:
         """
-        生成HTML报告
+        加载LLM返回的JSON结果
         
         Args:
             project_path: 项目路径
-            summaries: 可选的总结数据（从LLM获取后传入）
+            
+        Returns:
+            Optional[Dict]: LLM响应数据，如果不存在则返回None
+        """
+        llm_response_file = os.path.join(project_path, 'step5_overview', 'llm_response.json')
+        
+        if os.path.exists(llm_response_file):
+            try:
+                file_manager = FileManager(self.config, self.logger)
+                data = file_manager.load_json(llm_response_file)
+                self.logger.info(f"已加载LLM响应: {llm_response_file}")
+                return data
+            except Exception as e:
+                self.logger.warning(f"加载LLM响应失败: {str(e)}")
+                return None
+        else:
+            self.logger.warning(f"未找到LLM响应文件: {llm_response_file}")
+            self.logger.info("请先将LLM输出的JSON保存到 step5_overview/llm_response.json")
+            return None
+    
+    def _load_all_data(self, project_path: str, file_manager: FileManager) -> Dict:
+        """加载所有步骤的数据"""
+        data = {}
+        
+        step1_file = os.path.join(project_path, 'step1_search', 'search_results.json')
+        if os.path.exists(step1_file):
+            data['search'] = file_manager.load_json(step1_file)
+        
+        step2_file = os.path.join(project_path, 'step2_details', 'papers_details.json')
+        if os.path.exists(step2_file):
+            data['details'] = file_manager.load_json(step2_file)
+            data['papers'] = data['details'].get('papers', [])
+        
+        step3_file = os.path.join(project_path, 'step3_figures', 'figures_info.json')
+        if os.path.exists(step3_file):
+            data['figures'] = file_manager.load_json(step3_file)
+            data['figures_map'] = {}
+            for paper_fig in data['figures'].get('papers', []):
+                pmid = paper_fig.get('pmid')
+                if pmid:
+                    data['figures_map'][pmid] = paper_fig.get('figures', [])
+        
+        return data
+    
+    def _generate_slug(self, title: str) -> str:
+        """生成URL友好的文件名slug"""
+        slug = re.sub(r'[^\w\s-]', '', title.lower())
+        slug = re.sub(r'[-\s]+', '_', slug)
+        return slug[:50]
+    
+    def generate_report(self, project_path: str) -> Dict:
+        """
+        生成HTML报告（主页+详情页）
+        
+        Args:
+            project_path: 项目路径
             
         Returns:
             Dict: 生成结果
@@ -37,29 +92,56 @@ class ReportGenerator:
         try:
             file_manager = FileManager(self.config, self.logger)
             
-            # 加载所有数据
             data = self._load_all_data(project_path, file_manager)
+            llm_response = self._load_llm_response(project_path)
             
-            # 生成HTML
-            html_content = self._generate_html(data, project_path, summaries)
-            
-            # 保存报告到 FinalOutput 目录
             final_output_dir = os.path.join(project_path, 'FinalOutput')
             os.makedirs(final_output_dir, exist_ok=True)
-            report_file = os.path.join(final_output_dir, 'report.html')
             
-            with open(report_file, 'w', encoding='utf-8') as f:
-                f.write(html_content)
+            papers = data.get('papers', [])
+            figures_map = data.get('figures_map', {})
+            
+            generated_files = []
+            
+            if llm_response:
+                papers_analysis = llm_response.get('papers', {})
+                for i, paper in enumerate(papers, 1):
+                    pmid = paper.get('pmid', '')
+                    paper_analysis = papers_analysis.get(pmid, {})
+                    paper_figures = figures_map.get(pmid, [])
+                    
+                    self.logger.progress(i, len(papers), f"生成详情页: {pmid}")
+                    
+                    detail_html = self._generate_paper_detail_html(
+                        paper, paper_analysis, paper_figures, project_path
+                    )
+                    
+                    slug = self._generate_slug(paper.get('title', pmid))
+                    detail_file = os.path.join(final_output_dir, f'{pmid}_{slug}.html')
+                    with open(detail_file, 'w', encoding='utf-8') as f:
+                        f.write(detail_html)
+                    
+                    generated_files.append(f'{pmid}_{slug}.html')
+                
+                print()
+            
+            overview_html = self._generate_overview_html(data, llm_response, project_path, generated_files)
+            overview_file = os.path.join(final_output_dir, 'overview_report.html')
+            with open(overview_file, 'w', encoding='utf-8') as f:
+                f.write(overview_html)
             
             result = {
                 'success': True,
                 'generate_time': datetime.now().isoformat(),
-                'report_file': report_file,
-                'paper_count': len(data.get('papers', []))
+                'overview_file': overview_file,
+                'detail_files': generated_files,
+                'paper_count': len(papers),
+                'has_llm_response': llm_response is not None
             }
             
             self.logger.success(f"HTML报告生成完成")
-            self.logger.info(f"保存至: {report_file}")
+            self.logger.info(f"主报告: {overview_file}")
+            self.logger.info(f"详情页: {len(generated_files)} 个")
             
             return result
             
@@ -73,117 +155,137 @@ class ReportGenerator:
                 'generate_time': datetime.now().isoformat()
             }
     
-    def _load_all_data(self, project_path: str, file_manager: FileManager) -> Dict:
-        """加载所有步骤的数据"""
-        data = {}
-        
-        # 搜索结果
-        step1_file = os.path.join(project_path, 'step1_search', 'search_results.json')
-        if os.path.exists(step1_file):
-            data['search'] = file_manager.load_json(step1_file)
-        
-        # 论文详情
-        step2_file = os.path.join(project_path, 'step2_details', 'papers_details.json')
-        if os.path.exists(step2_file):
-            data['details'] = file_manager.load_json(step2_file)
-            data['papers'] = data['details'].get('papers', [])
-        
-        # 图片信息
-        step3_file = os.path.join(project_path, 'step3_figures', 'figures_info.json')
-        if os.path.exists(step3_file):
-            data['figures'] = file_manager.load_json(step3_file)
-            # 构建PMID到图片的映射
-            data['figures_map'] = {}
-            for paper_fig in data['figures'].get('papers', []):
-                pmid = paper_fig.get('pmid')
-                if pmid:
-                    data['figures_map'][pmid] = paper_fig.get('figures', [])
-        
-        return data
-    
-    def _generate_html(self, data: Dict, project_path: str, summaries: Optional[Dict] = None) -> str:
-        """生成HTML内容"""
+    def _generate_overview_html(self, data: Dict, llm_response: Optional[Dict], 
+                                 project_path: str, detail_files: List[str]) -> str:
+        """生成主报告HTML"""
         search_query = data.get('search', {}).get('query', '未知主题')
         papers = data.get('papers', [])
-        figures_map = data.get('figures_map', {})
         
-        # 生成论文卡片HTML
-        papers_html = []
-        for i, paper in enumerate(papers, 1):
-            pmid = paper.get('pmid', '')
-            figures = figures_map.get(pmid, [])
-            
-            # 获取该论文的总结（如果有）
-            paper_summary = None
-            if summaries and summaries.get('papers'):
-                paper_summary = summaries['papers'].get(pmid)
-            
-            card_html = self._generate_paper_card(paper, figures, project_path, i, paper_summary)
-            papers_html.append(card_html)
+        overview = llm_response.get('overview', {}) if llm_response else {}
+        papers_analysis = llm_response.get('papers', {}) if llm_response else {}
         
-        # 获取综合总结（如果有）
-        overview_html = ""
-        if summaries and summaries.get('overview'):
-            overview = summaries['overview']
-            overview_html = f"""
-            <section class="overview-section">
-                <h2>综合总结 Overview</h2>
-                <div class="overview-content">
-                    <div class="summary-cn">
-                        <h3>中文总结</h3>
-                        <p>{overview.get('overview_cn', '等待生成...')}</p>
-                    </div>
-                    <div class="summary-en">
-                        <h3>English Summary</h3>
-                        <p>{overview.get('overview_en', 'Waiting for generation...')}</p>
-                    </div>
-                </div>
-            </section>
-            """
+        overview_cn = overview.get('overview_cn', '等待LLM生成...')
+        overview_en = overview.get('overview_en', 'Waiting for LLM generation...')
+        research_trends = overview.get('research_trends', '')
+        key_themes = overview.get('key_themes', [])
+        evidence = overview.get('evidence', {})
+        hypotheses = overview.get('hypotheses', '')
+        open_questions = overview.get('open_questions', [])
         
-        # 完整HTML
+        themes_html = self._generate_themes_html(key_themes)
+        evidence_html = self._generate_evidence_html(evidence)
+        questions_html = self._generate_questions_html(open_questions)
+        papers_list_html = self._generate_papers_list_html(papers, papers_analysis, detail_files)
+        
+        fulltext_count = sum(1 for p in papers if p.get('fulltext_status') == 'success')
+        abstract_count = len(papers) - fulltext_count
+        
         html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PubMed文献综述 - {search_query}</title>
+    <title>{search_query} - 文献综述</title>
     <style>
-        {self._get_css_styles()}
+        {self._get_overview_css_styles()}
     </style>
 </head>
 <body>
-    <header class="main-header">
-        <div class="container">
-            <h1>PubMed 文献综述</h1>
-            <p class="search-query">检索主题: <strong>{search_query}</strong></p>
-            <p class="meta-info">共 {len(papers)} 篇论文 | 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+    <header>
+        <div class="container header-content">
+            <span class="doc-type">Literature Review</span>
+            <h1>{search_query}</h1>
+            <div class="meta-info">
+                <span class="meta-item">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                    </svg>
+                    共 {len(papers)} 篇论文
+                </span>
+                <span class="meta-item">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    生成时间: {datetime.now().strftime('%Y-%m-%d')}
+                </span>
+                <span class="meta-item">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                    {fulltext_count}篇全文 / {abstract_count}篇摘要
+                </span>
+            </div>
         </div>
     </header>
     
-    <main class="container">
-        {overview_html}
-        
-        <section class="papers-section">
-            <h2>论文详情 Papers</h2>
-            <div class="papers-grid">
-                {''.join(papers_html)}
-            </div>
-        </section>
-        
-        <section class="prompts-section">
-            <h2>Prompt 文件位置</h2>
-            <div class="prompt-info">
-                <p>单篇论文Prompt: <code>{project_path}/step4_prompts/</code></p>
-                <p>综合总结Prompt: <code>{project_path}/step5_overview/overview_prompt.txt</code></p>
-                <p class="hint">将Prompt内容复制到LLM（如Cursor/ChatGPT）获取总结，然后将结果填入summaries.json</p>
-            </div>
-        </section>
+    <main>
+        <div class="container">
+            <!-- 综合综述 -->
+            <section class="section">
+                <h2 class="section-title">综合综述 Overview</h2>
+                
+                <div class="overview-card">
+                    <h3><span class="lang-tag">ZH</span> 中文综述</h3>
+                    <div class="overview-content">{self._format_paragraphs(overview_cn)}</div>
+                </div>
+                
+                <div class="overview-card en-version">
+                    <h3><span class="lang-tag">EN</span> English Summary</h3>
+                    <div class="overview-content">{self._format_paragraphs(overview_en)}</div>
+                </div>
+            </section>
+            
+            <!-- 研究趋势 -->
+            {f'''<section class="section">
+                <h2 class="section-title">研究趋势 Research Trends</h2>
+                <div class="trends-box">
+                    <div class="trends-content">{self._format_paragraphs(research_trends)}</div>
+                </div>
+            </section>''' if research_trends else ''}
+            
+            <!-- 核心主题 -->
+            {f'''<section class="section">
+                <h2 class="section-title">核心研究主题 Key Themes</h2>
+                {themes_html}
+            </section>''' if key_themes else ''}
+            
+            <!-- 研究证据 -->
+            {f'''<section class="section">
+                <h2 class="section-title">研究证据 Research Evidence</h2>
+                {evidence_html}
+            </section>''' if evidence else ''}
+            
+            <!-- 推测性假说 -->
+            {f'''<section class="section">
+                <h2 class="section-title">推测性假说 Hypotheses</h2>
+                <div class="hypotheses-box">
+                    <div class="hypotheses-content">{self._format_paragraphs(hypotheses)}</div>
+                </div>
+            </section>''' if hypotheses else ''}
+            
+            <!-- 未解决问题 -->
+            {f'''<section class="section">
+                <h2 class="section-title">未解决问题与实验策略 Open Questions</h2>
+                {questions_html}
+            </section>''' if open_questions else ''}
+            
+            <!-- 论文列表 -->
+            <section class="section">
+                <h2 class="section-title">纳入文献 Included Studies</h2>
+                <div class="papers-summary">
+                    {papers_list_html}
+                </div>
+            </section>
+        </div>
     </main>
     
-    <footer class="main-footer">
+    <footer>
         <div class="container">
-            <p>Generated by PubMed2Zhihu | {datetime.now().strftime('%Y-%m-%d')}</p>
+            <p>Generated by PubMed2Zhihu | 文献综述报告</p>
+            <p>数据来源: NCBI PubMed / PubMed Central | {datetime.now().strftime('%Y-%m-%d')}</p>
         </div>
     </footer>
 </body>
@@ -191,10 +293,9 @@ class ReportGenerator:
 """
         return html
     
-    def _generate_paper_card(self, paper: Dict, figures: List[Dict], 
-                             project_path: str, index: int, 
-                             summary: Optional[Dict] = None) -> str:
-        """生成单篇论文的HTML卡片"""
+    def _generate_paper_detail_html(self, paper: Dict, paper_analysis: Dict,
+                                     figures: List[Dict], project_path: str) -> str:
+        """生成单篇论文详情页HTML"""
         pmid = paper.get('pmid', '')
         title = paper.get('title', '未知标题')
         authors = paper.get('authors', [])
@@ -204,72 +305,273 @@ class ReportGenerator:
         doi = paper.get('doi', '')
         pmcid = paper.get('pmcid', '')
         
-        # 格式化作者
         if isinstance(authors, list):
-            authors_str = ', '.join(authors[:3])
-            if len(authors) > 3:
-                authors_str += f' 等'
+            authors_str = ', '.join(authors[:5])
+            if len(authors) > 5:
+                authors_str += f' 等（共{len(authors)}位作者）'
         else:
             authors_str = str(authors)
         
-        # 生成图片HTML
+        research_content = paper_analysis.get('research_content', '')
+        future_directions = paper_analysis.get('future_directions', '')
+        paper_themes = paper_analysis.get('paper_themes', [])
+        
+        themes_tags = ''.join([f'<span class="theme-tag">{t}</span>' for t in paper_themes])
         figures_html = self._generate_figures_html(figures, project_path)
         
-        # 生成总结HTML（如果有）
-        summary_html = ""
-        if summary:
-            summary_html = f"""
-            <div class="paper-summary">
-                <div class="summary-cn">
-                    <h4>中文小结</h4>
-                    <p>{summary.get('summary_cn', '')}</p>
-                </div>
-                <div class="summary-en">
-                    <h4>English Summary</h4>
-                    <p>{summary.get('summary_en', '')}</p>
-                </div>
-            </div>
-            """
-        
-        # 链接
         pubmed_link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
         doi_link = f"https://doi.org/{doi}" if doi else ""
         pmc_link = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/" if pmcid else ""
         
-        return f"""
-        <article class="paper-card" id="paper-{pmid}">
-            <div class="paper-header">
-                <span class="paper-index">#{index}</span>
-                <h3 class="paper-title">{title}</h3>
-            </div>
-            
+        html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title[:80]} - 论文详情</title>
+    <style>
+        {self._get_detail_css_styles()}
+    </style>
+</head>
+<body>
+    <nav class="top-nav">
+        <div class="container">
+            <a href="overview_report.html" class="back-link">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+                返回综述
+            </a>
+        </div>
+    </nav>
+    
+    <header>
+        <div class="container header-content">
+            <span class="paper-type">Research Article</span>
+            <h1>{title}</h1>
             <div class="paper-meta">
                 <span class="authors">{authors_str}</span>
                 <span class="journal">{journal}</span>
                 <span class="date">{pub_date}</span>
             </div>
-            
             <div class="paper-links">
                 <a href="{pubmed_link}" target="_blank" class="link-btn pubmed">PubMed</a>
                 {f'<a href="{doi_link}" target="_blank" class="link-btn doi">DOI</a>' if doi_link else ''}
                 {f'<a href="{pmc_link}" target="_blank" class="link-btn pmc">PMC全文</a>' if pmc_link else ''}
             </div>
+        </div>
+    </header>
+    
+    <main>
+        <div class="container">
+            <!-- 关键主题 -->
+            {f'''<section class="section themes-section">
+                <h2 class="section-title">关键主题 Key Themes</h2>
+                <div class="themes-container">
+                    {themes_tags}
+                </div>
+            </section>''' if paper_themes else ''}
             
-            <div class="paper-abstract">
-                <h4>摘要 Abstract</h4>
-                <p>{abstract}</p>
-            </div>
+            <!-- 研究内容 -->
+            {f'''<section class="section">
+                <h2 class="section-title">研究内容 Research Content</h2>
+                <div class="content-card">
+                    {self._format_paragraphs(research_content)}
+                </div>
+            </section>''' if research_content else ''}
             
-            {summary_html}
+            <!-- 潜在研究方向 -->
+            {f'''<section class="section">
+                <h2 class="section-title">潜在研究方向 Future Directions</h2>
+                <div class="directions-card">
+                    {self._format_paragraphs(future_directions)}
+                </div>
+            </section>''' if future_directions else ''}
             
+            <!-- 原文摘要 -->
+            <section class="section">
+                <h2 class="section-title">原文摘要 Abstract</h2>
+                <div class="abstract-card">
+                    <p>{abstract}</p>
+                </div>
+            </section>
+            
+            <!-- 图片 -->
             {figures_html}
-        </article>
-        """
+        </div>
+    </main>
+    
+    <footer>
+        <div class="container">
+            <p>PMID: {pmid} | Generated by PubMed2Zhihu</p>
+        </div>
+    </footer>
+</body>
+</html>
+"""
+        return html
+    
+    def _format_paragraphs(self, text: str) -> str:
+        """将文本格式化为HTML段落"""
+        if not text:
+            return '<p>内容待生成...</p>'
+        
+        paragraphs = text.split('\n\n')
+        if len(paragraphs) == 1:
+            paragraphs = text.split('。')
+            if len(paragraphs) > 3:
+                chunks = []
+                current = []
+                for p in paragraphs:
+                    current.append(p)
+                    if len(current) >= 3:
+                        chunks.append('。'.join(current) + '。')
+                        current = []
+                if current:
+                    chunks.append('。'.join(current))
+                paragraphs = chunks
+            else:
+                paragraphs = [text]
+        
+        return ''.join([f'<p>{p.strip()}</p>' for p in paragraphs if p.strip()])
+    
+    def _generate_themes_html(self, themes: List[Dict]) -> str:
+        """生成主题卡片HTML"""
+        if not themes:
+            return ''
+        
+        cards = []
+        for theme in themes:
+            title_cn = theme.get('title_cn', theme.get('title', ''))
+            title_en = theme.get('title_en', '')
+            description = theme.get('description', '')
+            
+            cards.append(f'''
+            <div class="theme-card">
+                <h4>{title_cn}</h4>
+                {f'<span class="theme-en">{title_en}</span>' if title_en else ''}
+                <p>{description}</p>
+            </div>
+            ''')
+        
+        return f'<div class="themes-grid">{" ".join(cards)}</div>'
+    
+    def _generate_evidence_html(self, evidence: Dict) -> str:
+        """生成研究证据HTML"""
+        if not evidence:
+            return ''
+        
+        basic = evidence.get('basic_research', '')
+        clinical = evidence.get('clinical_research', '')
+        
+        return f'''
+        <div class="evidence-grid">
+            <div class="evidence-card basic">
+                <h4>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"></path>
+                    </svg>
+                    基础研究证据
+                </h4>
+                <div class="evidence-content">{self._format_paragraphs(basic)}</div>
+            </div>
+            <div class="evidence-card clinical">
+                <h4>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                    </svg>
+                    临床研究证据
+                </h4>
+                <div class="evidence-content">{self._format_paragraphs(clinical)}</div>
+            </div>
+        </div>
+        '''
+    
+    def _generate_questions_html(self, questions: List[Dict]) -> str:
+        """生成未解决问题HTML"""
+        if not questions:
+            return ''
+        
+        items = []
+        for i, q in enumerate(questions, 1):
+            question = q.get('question', '')
+            strategy = q.get('strategy', '')
+            
+            items.append(f'''
+            <div class="question-item">
+                <div class="question-num">{i}</div>
+                <div class="question-content">
+                    <h4>{question}</h4>
+                    <div class="strategy">
+                        <span class="strategy-label">实验策略:</span>
+                        <p>{strategy}</p>
+                    </div>
+                </div>
+            </div>
+            ''')
+        
+        return f'<div class="questions-list">{" ".join(items)}</div>'
+    
+    def _generate_papers_list_html(self, papers: List[Dict], papers_analysis: Dict, 
+                                    detail_files: List[str]) -> str:
+        """生成论文列表HTML"""
+        items = []
+        
+        file_map = {}
+        for f in detail_files:
+            pmid = f.split('_')[0]
+            file_map[pmid] = f
+        
+        for i, paper in enumerate(papers, 1):
+            pmid = paper.get('pmid', '')
+            title = paper.get('title', '未知标题')
+            authors = paper.get('authors', [])
+            journal = paper.get('journal', '未知期刊')
+            pub_date = paper.get('pub_date', '')
+            
+            if isinstance(authors, list):
+                first_author = authors[0] if authors else '未知'
+            else:
+                first_author = str(authors)
+            
+            analysis = papers_analysis.get(pmid, {})
+            paper_themes = analysis.get('paper_themes', [])
+            themes_html = ''.join([f'<span class="mini-tag">{t}</span>' for t in paper_themes[:3]])
+            
+            detail_file = file_map.get(pmid, '')
+            
+            if detail_file:
+                items.append(f'''
+                <a href="{detail_file}" class="paper-item">
+                    <span class="paper-num">{i}</span>
+                    <div class="paper-info">
+                        <div class="paper-title">{title}</div>
+                        <div class="paper-meta">{first_author} 等 | {journal} | {pub_date}</div>
+                        {f'<div class="paper-themes">{themes_html}</div>' if themes_html else ''}
+                    </div>
+                    <svg class="arrow-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                    </svg>
+                </a>
+                ''')
+            else:
+                items.append(f'''
+                <div class="paper-item no-link">
+                    <span class="paper-num">{i}</span>
+                    <div class="paper-info">
+                        <div class="paper-title">{title}</div>
+                        <div class="paper-meta">{first_author} 等 | {journal} | {pub_date}</div>
+                    </div>
+                </div>
+                ''')
+        
+        return f'<div class="papers-list">{" ".join(items)}</div>'
     
     def _generate_figures_html(self, figures: List[Dict], project_path: str) -> str:
         """生成图片展示HTML"""
         if not figures:
-            return '<div class="no-figures"><p>该论文无可获取的图片</p></div>'
+            return ''
         
         figures_items = []
         for fig in figures:
@@ -277,285 +579,570 @@ class ReportGenerator:
             caption = fig.get('caption', '')
             local_path = fig.get('local_path')
             original_url = fig.get('original_url', '')
-            is_original = fig.get('is_original', True)
-            
-            # 图片来源标记
-            source_tag = '<span class="source-tag original">原图</span>' if is_original else '<span class="source-tag generated">示意图</span>'
             
             if local_path:
-                # 本地图片 - 使用相对路径
                 img_path = f"../step3_figures/{local_path}"
                 img_html = f'<img src="{img_path}" alt="{fig_id}" style="max-width: {self.image_width}px;">'
             elif original_url:
-                # 使用原始URL
                 img_html = f'<img src="{original_url}" alt="{fig_id}" style="max-width: {self.image_width}px;" onerror="this.style.display=\'none\'">'
             else:
                 img_html = '<p class="no-image">图片不可用</p>'
             
-            figures_items.append(f"""
+            figures_items.append(f'''
             <div class="figure-item">
-                <div class="figure-header">
-                    <span class="figure-id">{fig_id}</span>
-                    {source_tag}
-                </div>
-                <div class="figure-image">
-                    {img_html}
-                </div>
-                <div class="figure-caption">
-                    <p>{caption}</p>
-                </div>
+                <div class="figure-header">{fig_id}</div>
+                <div class="figure-image">{img_html}</div>
+                <div class="figure-caption">{caption}</div>
             </div>
-            """)
+            ''')
         
-        return f"""
-        <div class="paper-figures">
-            <h4>图片 Figures ({len(figures)}张)</h4>
-            <div class="figures-grid">
-                {''.join(figures_items)}
-            </div>
-        </div>
-        """
+        return f'''
+        <section class="section">
+            <h2 class="section-title">图片 Figures ({len(figures)})</h2>
+            <div class="figures-grid">{" ".join(figures_items)}</div>
+        </section>
+        '''
     
-    def _get_css_styles(self) -> str:
-        """获取CSS样式"""
+    def _get_overview_css_styles(self) -> str:
+        """获取主报告CSS样式"""
         return """
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Serif+Pro:wght@400;600&family=Noto+Serif+SC:wght@400;600;700&display=swap');
+        
         :root {
-            --primary-color: #2563eb;
-            --secondary-color: #64748b;
-            --accent-color: #0891b2;
-            --bg-color: #f8fafc;
-            --card-bg: #ffffff;
-            --text-color: #1e293b;
-            --text-light: #64748b;
+            --primary: #1a365d;
+            --primary-light: #2c5282;
+            --primary-dark: #0d1b2a;
+            --accent: #ed8936;
+            --accent-light: #fbd38d;
+            --bg-main: #f7fafc;
+            --bg-card: #ffffff;
+            --text-dark: #1a202c;
+            --text-muted: #4a5568;
             --border-color: #e2e8f0;
-            --success-color: #10b981;
-            --warning-color: #f59e0b;
+            --success: #38a169;
+            --info: #3182ce;
         }
         
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            line-height: 1.6;
+            font-family: 'Source Serif Pro', 'Noto Serif SC', Georgia, serif;
+            line-height: 1.8;
+            color: var(--text-dark);
+            background: var(--bg-main);
         }
         
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 20px;
-        }
+        .container { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
         
         /* Header */
-        .main-header {
-            background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
-            color: white;
-            padding: 40px 0;
-            margin-bottom: 40px;
+        header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: #fff;
+            padding: 60px 0 50px;
+            position: relative;
         }
         
-        .main-header h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 10px;
+        header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-light), transparent);
         }
         
-        .search-query {
-            font-size: 1.2rem;
-            opacity: 0.9;
+        .doc-type {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--primary-dark);
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 16px;
+            border-radius: 20px;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+        }
+        
+        header h1 {
+            font-family: 'Playfair Display', 'Noto Serif SC', serif;
+            font-size: 28px;
+            font-weight: 600;
+            line-height: 1.4;
+            margin-bottom: 20px;
         }
         
         .meta-info {
-            font-size: 0.9rem;
-            opacity: 0.8;
-            margin-top: 10px;
-        }
-        
-        /* Sections */
-        section {
-            margin-bottom: 40px;
-        }
-        
-        section h2 {
-            font-size: 1.5rem;
-            color: var(--primary-color);
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid var(--border-color);
-        }
-        
-        /* Overview */
-        .overview-section {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 30px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        }
-        
-        .overview-content {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-        }
-        
-        .overview-content h3 {
-            color: var(--primary-color);
-            margin-bottom: 15px;
-        }
-        
-        /* Papers Grid */
-        .papers-grid {
             display: flex;
-            flex-direction: column;
-            gap: 30px;
+            flex-wrap: wrap;
+            gap: 20px;
+            font-size: 14px;
+            opacity: 0.9;
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255,255,255,0.2);
         }
         
-        /* Paper Card */
-        .paper-card {
-            background: var(--card-bg);
+        .meta-item { display: flex; align-items: center; gap: 8px; }
+        .meta-item svg { width: 16px; height: 16px; opacity: 0.8; }
+        
+        /* Main */
+        main { padding: 50px 0 80px; }
+        
+        .section { margin-bottom: 50px; }
+        
+        .section-title {
+            font-family: 'Playfair Display', 'Noto Serif SC', serif;
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 24px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--border-color);
+            position: relative;
+        }
+        
+        .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 60px;
+            height: 2px;
+            background: var(--accent);
+        }
+        
+        /* Overview Cards */
+        .overview-card {
+            background: var(--bg-card);
             border-radius: 12px;
-            padding: 25px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            padding: 32px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            margin-bottom: 24px;
+            border-left: 4px solid var(--primary);
+        }
+        
+        .overview-card h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .lang-tag {
+            font-size: 10px;
+            font-weight: 700;
+            background: var(--accent-light);
+            color: var(--primary-dark);
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+        
+        .overview-card.en-version { border-left-color: var(--info); }
+        .overview-card.en-version .overview-content { font-style: italic; color: var(--text-muted); }
+        
+        .overview-content p { margin-bottom: 12px; text-align: justify; }
+        .overview-content p:last-child { margin-bottom: 0; }
+        
+        /* Trends */
+        .trends-box {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: #fff;
+            border-radius: 12px;
+            padding: 32px;
+        }
+        
+        .trends-content p { opacity: 0.95; margin-bottom: 12px; }
+        
+        /* Themes */
+        .themes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .theme-card {
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            border-left: 4px solid var(--accent);
             transition: transform 0.2s, box-shadow 0.2s;
         }
         
-        .paper-card:hover {
+        .theme-card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.1);
         }
         
-        .paper-header {
+        .theme-card h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+        
+        .theme-en {
+            display: block;
+            font-size: 13px;
+            color: var(--text-muted);
+            font-style: italic;
+            margin-bottom: 12px;
+        }
+        
+        .theme-card p { font-size: 14px; color: var(--text-muted); line-height: 1.7; }
+        
+        /* Evidence */
+        .evidence-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+        }
+        
+        .evidence-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 28px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        
+        .evidence-card.basic { border-top: 4px solid var(--info); }
+        .evidence-card.clinical { border-top: 4px solid var(--success); }
+        
+        .evidence-card h4 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 16px;
             display: flex;
-            align-items: flex-start;
-            gap: 15px;
-            margin-bottom: 15px;
+            align-items: center;
+            gap: 10px;
         }
         
-        .paper-index {
-            background: var(--primary-color);
-            color: white;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.9rem;
+        .evidence-card h4 svg { width: 20px; height: 20px; }
+        .evidence-card.basic h4 svg { color: var(--info); }
+        .evidence-card.clinical h4 svg { color: var(--success); }
+        
+        .evidence-content p { font-size: 14px; color: var(--text-muted); margin-bottom: 10px; }
+        
+        /* Hypotheses */
+        .hypotheses-box {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            border-left: 4px solid var(--accent);
+        }
+        
+        .hypotheses-content p { margin-bottom: 12px; }
+        
+        /* Questions */
+        .questions-list { display: flex; flex-direction: column; gap: 20px; }
+        
+        .question-item {
+            display: flex;
+            gap: 20px;
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        
+        .question-num {
+            flex-shrink: 0;
+            width: 36px;
+            height: 36px;
+            background: var(--primary);
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-weight: 600;
         }
         
+        .question-content { flex: 1; }
+        .question-content h4 { font-size: 16px; color: var(--primary); margin-bottom: 12px; }
+        
+        .strategy {
+            background: #f0fff4;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-top: 12px;
+        }
+        
+        .strategy-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--success);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .strategy p { font-size: 14px; color: var(--text-muted); margin-top: 6px; }
+        
+        /* Papers List */
+        .papers-summary {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        
+        .papers-list { display: flex; flex-direction: column; gap: 8px; }
+        
+        .paper-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            background: var(--bg-main);
+            border-radius: 10px;
+            text-decoration: none;
+            color: inherit;
+            transition: background 0.2s, transform 0.2s;
+        }
+        
+        .paper-item:hover {
+            background: rgba(237, 137, 54, 0.1);
+            transform: translateX(4px);
+        }
+        
+        .paper-item.no-link { cursor: default; }
+        .paper-item.no-link:hover { transform: none; }
+        
+        .paper-num {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            background: var(--primary);
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        
+        .paper-info { flex: 1; min-width: 0; }
+        
         .paper-title {
-            font-size: 1.2rem;
-            color: var(--text-color);
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-dark);
             line-height: 1.4;
+            margin-bottom: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+        
+        .paper-meta { font-size: 12px; color: var(--text-muted); }
+        
+        .paper-themes { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+        
+        .mini-tag {
+            font-size: 11px;
+            background: var(--accent-light);
+            color: var(--primary-dark);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .arrow-icon {
+            flex-shrink: 0;
+            width: 20px;
+            height: 20px;
+            color: var(--text-muted);
+            opacity: 0.5;
+        }
+        
+        .paper-item:hover .arrow-icon { opacity: 1; color: var(--accent); }
+        
+        /* Footer */
+        footer {
+            background: var(--primary-dark);
+            color: rgba(255,255,255,0.7);
+            padding: 24px 0;
+            text-align: center;
+            font-size: 13px;
+        }
+        
+        footer p { margin: 4px 0; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            header h1 { font-size: 22px; }
+            .evidence-grid { grid-template-columns: 1fr; }
+            .themes-grid { grid-template-columns: 1fr; }
+            .question-item { flex-direction: column; gap: 12px; }
+        }
+        """
+    
+    def _get_detail_css_styles(self) -> str:
+        """获取详情页CSS样式"""
+        return """
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Serif+Pro:wght@400;600&family=Noto+Serif+SC:wght@400;600;700&display=swap');
+        
+        :root {
+            --primary: #2d3748;
+            --primary-light: #4a5568;
+            --accent: #ed8936;
+            --accent-light: #fbd38d;
+            --bg-main: #f7fafc;
+            --bg-card: #ffffff;
+            --text-dark: #1a202c;
+            --text-muted: #4a5568;
+            --border-color: #e2e8f0;
+            --success: #38a169;
+            --info: #3182ce;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Source Serif Pro', 'Noto Serif SC', Georgia, serif;
+            line-height: 1.8;
+            color: var(--text-dark);
+            background: var(--bg-main);
+        }
+        
+        .container { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+        
+        /* Top Nav */
+        .top-nav {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--primary);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .back-link:hover { color: var(--accent); }
+        .back-link svg { width: 18px; height: 18px; }
+        
+        /* Header */
+        header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: #fff;
+            padding: 50px 0 40px;
+        }
+        
+        .paper-type {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--primary);
+            font-size: 10px;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 16px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }
+        
+        header h1 {
+            font-family: 'Playfair Display', 'Noto Serif SC', serif;
+            font-size: 24px;
+            font-weight: 600;
+            line-height: 1.4;
+            margin-bottom: 16px;
         }
         
         .paper-meta {
             display: flex;
             flex-wrap: wrap;
-            gap: 15px;
-            margin-bottom: 15px;
-            font-size: 0.9rem;
-            color: var(--text-light);
+            gap: 16px;
+            font-size: 13px;
+            opacity: 0.9;
+            margin-bottom: 16px;
         }
         
-        .paper-meta .journal {
-            color: var(--accent-color);
-            font-weight: 500;
-        }
+        .paper-meta .journal { color: var(--accent-light); }
         
-        .paper-links {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
+        .paper-links { display: flex; gap: 10px; flex-wrap: wrap; }
         
         .link-btn {
+            display: inline-block;
             padding: 6px 14px;
             border-radius: 6px;
-            font-size: 0.85rem;
+            font-size: 12px;
+            font-weight: 600;
             text-decoration: none;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .link-btn:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+        
+        .link-btn.pubmed { background: #e0f2fe; color: #0369a1; }
+        .link-btn.doi { background: #fef3c7; color: #b45309; }
+        .link-btn.pmc { background: #d1fae5; color: #047857; }
+        
+        /* Main */
+        main { padding: 40px 0 60px; }
+        
+        .section { margin-bottom: 40px; }
+        
+        .section-title {
+            font-family: 'Playfair Display', 'Noto Serif SC', serif;
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--border-color);
+        }
+        
+        /* Themes */
+        .themes-container { display: flex; flex-wrap: wrap; gap: 10px; }
+        
+        .theme-tag {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--accent), #dd6b20);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 20px;
+            font-size: 14px;
             font-weight: 500;
-            transition: background-color 0.2s;
         }
         
-        .link-btn.pubmed {
-            background: #e0f2fe;
-            color: #0369a1;
+        /* Content Cards */
+        .content-card, .directions-card, .abstract-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 28px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         }
         
-        .link-btn.pubmed:hover {
-            background: #bae6fd;
-        }
+        .content-card { border-left: 4px solid var(--info); }
+        .directions-card { border-left: 4px solid var(--success); }
+        .abstract-card { border-left: 4px solid var(--primary); }
         
-        .link-btn.doi {
-            background: #fef3c7;
-            color: #b45309;
-        }
-        
-        .link-btn.doi:hover {
-            background: #fde68a;
-        }
-        
-        .link-btn.pmc {
-            background: #d1fae5;
-            color: #047857;
-        }
-        
-        .link-btn.pmc:hover {
-            background: #a7f3d0;
-        }
-        
-        .paper-abstract {
-            margin-bottom: 20px;
-        }
-        
-        .paper-abstract h4 {
-            color: var(--secondary-color);
-            margin-bottom: 10px;
-            font-size: 0.95rem;
-        }
-        
-        .paper-abstract p {
-            color: var(--text-light);
-            font-size: 0.95rem;
-            line-height: 1.7;
-        }
-        
-        /* Summary */
-        .paper-summary {
-            background: #f0f9ff;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        
-        .paper-summary h4 {
-            color: var(--primary-color);
-            margin-bottom: 10px;
-            font-size: 0.95rem;
-        }
-        
-        .summary-cn, .summary-en {
-            margin-bottom: 15px;
-        }
-        
-        .summary-cn:last-child, .summary-en:last-child {
-            margin-bottom: 0;
+        .content-card p, .directions-card p, .abstract-card p {
+            margin-bottom: 12px;
+            text-align: justify;
         }
         
         /* Figures */
-        .paper-figures {
-            border-top: 1px solid var(--border-color);
-            padding-top: 20px;
-        }
-        
-        .paper-figures h4 {
-            color: var(--secondary-color);
-            margin-bottom: 15px;
-        }
-        
         .figures-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -563,118 +1150,49 @@ class ReportGenerator:
         }
         
         .figure-item {
-            background: #fafafa;
-            border-radius: 8px;
+            background: var(--bg-card);
+            border-radius: 10px;
             overflow: hidden;
-            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         }
         
         .figure-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 15px;
-            background: #f1f5f9;
-        }
-        
-        .figure-id {
+            background: var(--primary);
+            color: #fff;
+            padding: 10px 16px;
+            font-size: 14px;
             font-weight: 600;
-            color: var(--text-color);
-        }
-        
-        .source-tag {
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-        
-        .source-tag.original {
-            background: #dcfce7;
-            color: #166534;
-        }
-        
-        .source-tag.generated {
-            background: #fef3c7;
-            color: #92400e;
         }
         
         .figure-image {
-            padding: 15px;
+            padding: 16px;
             text-align: center;
-            background: white;
+            background: #fafafa;
         }
         
-        .figure-image img {
-            max-width: 100%;
-            height: auto;
-            border-radius: 4px;
-        }
+        .figure-image img { max-width: 100%; height: auto; border-radius: 4px; }
         
         .figure-caption {
-            padding: 15px;
-            font-size: 0.9rem;
-            color: var(--text-light);
+            padding: 14px 16px;
+            font-size: 13px;
+            color: var(--text-muted);
             border-top: 1px solid var(--border-color);
         }
         
-        .no-figures {
-            text-align: center;
-            padding: 20px;
-            color: var(--text-light);
-            background: #f8fafc;
-            border-radius: 8px;
-        }
-        
-        /* Prompts Section */
-        .prompts-section {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 30px;
-        }
-        
-        .prompt-info code {
-            background: #f1f5f9;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.9rem;
-        }
-        
-        .prompt-info .hint {
-            margin-top: 15px;
-            padding: 15px;
-            background: #fef3c7;
-            border-radius: 8px;
-            color: #92400e;
-            font-size: 0.9rem;
-        }
-        
         /* Footer */
-        .main-footer {
-            background: #1e293b;
-            color: #94a3b8;
+        footer {
+            background: var(--primary);
+            color: rgba(255,255,255,0.7);
             padding: 20px 0;
             text-align: center;
-            margin-top: 60px;
+            font-size: 13px;
         }
         
         /* Responsive */
         @media (max-width: 768px) {
-            .main-header h1 {
-                font-size: 1.8rem;
-            }
-            
-            .overview-content {
-                grid-template-columns: 1fr;
-            }
-            
-            .paper-header {
-                flex-direction: column;
-            }
-            
-            .figures-grid {
-                grid-template-columns: 1fr;
-            }
+            header h1 { font-size: 20px; }
+            .paper-meta { flex-direction: column; gap: 8px; }
+            .figures-grid { grid-template-columns: 1fr; }
         }
         """
 
@@ -697,11 +1215,18 @@ def main(project_path: str) -> bool:
         result = generator.generate_report(project_path)
         
         if result['success']:
-            # 保存结果到 FinalOutput 目录
             final_output_dir = os.path.join(project_path, 'FinalOutput')
             os.makedirs(final_output_dir, exist_ok=True)
+            
+            # 保存到 FinalOutput（主要位置）
             output_file = os.path.join(final_output_dir, 'report_info.json')
             file_manager.save_json(output_file, result)
+            
+            # 同时保存到 step6_report（兼容旧版本）
+            step6_dir = os.path.join(project_path, 'step6_report')
+            os.makedirs(step6_dir, exist_ok=True)
+            legacy_output_file = os.path.join(step6_dir, 'report_info.json')
+            file_manager.save_json(legacy_output_file, result)
             
             logger.step_complete(6, "生成HTML报告")
             return True
@@ -724,4 +1249,3 @@ if __name__ == "__main__":
     
     success = main(sys.argv[1])
     sys.exit(0 if success else 1)
-

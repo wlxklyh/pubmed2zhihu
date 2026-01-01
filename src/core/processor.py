@@ -15,7 +15,7 @@ from src.core.steps.step1_search_pubmed import PubMedSearcher
 from src.core.steps.step2_fetch_details import PaperDetailsFetcher
 from src.core.steps.step3_fetch_figures import PMCFigureFetcher
 from src.core.steps.step4_generate_prompts import PromptGenerator
-from src.core.steps.step5_generate_overview import OverviewPromptGenerator
+from src.core.steps.step5_generate_overview import MergedPromptGenerator
 from src.core.steps.step6_generate_report import ReportGenerator
 
 
@@ -303,8 +303,8 @@ class PubMedProcessor:
         """执行步骤5: 生成综合总结Prompt"""
         self.logger.step_start(5, "生成综合总结Prompt")
         
-        generator = OverviewPromptGenerator(self.config, self.logger)
-        result = generator.generate_overview_prompt(project_path)
+        generator = MergedPromptGenerator(self.config, self.logger)
+        result = generator.generate_merged_prompt(project_path)
         
         if result['success']:
             # 保存结果
